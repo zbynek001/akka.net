@@ -67,6 +67,8 @@ namespace Akka.Cluster
 
         private readonly Cluster _cluster;
 
+        private Member _cachedSelf;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -78,6 +80,8 @@ namespace Akka.Cluster
             _reachability = Reachability.Empty;
             _latestStats = new ClusterEvent.CurrentInternalStats(new GossipStats(), new VectorClockStats());
             _selfAddress = cluster.SelfAddress;
+
+            _cachedSelf = Member.Create(_cluster.SelfUniqueAddress, _cluster.SelfRoles, _cluster.Settings.AppVersion).Copy(MemberStatus.Removed);
 
             _eventBusListener =
                 cluster.System.SystemActorOf(
@@ -107,31 +111,26 @@ namespace Akka.Cluster
 
                 Receive<ClusterEvent.IClusterDomainEvent>(clusterDomainEvent =>
                 {
-                    clusterDomainEvent.Match()
-                        .With<ClusterEvent.SeenChanged>(changed =>
+                    switch (clusterDomainEvent)
                         {
+                        case ClusterEvent.SeenChanged changed:
                             State = State.Copy(seenBy: changed.SeenBy);
-                        })
-                        .With<ClusterEvent.ReachabilityChanged>(changed =>
-                        {
+                            break;
+                        case ClusterEvent.ReachabilityChanged changed:
                             _readView._reachability = changed.Reachability;
-                        })
-                        .With<ClusterEvent.MemberRemoved>(removed =>
-                        {
+                            break;
+                        case ClusterEvent.MemberRemoved removed:
                             State = State.Copy(members: State.Members.Remove(removed.Member),
                                 unreachable: State.Unreachable.Remove(removed.Member));
-                        })
-                        .With<ClusterEvent.UnreachableMember>(member =>
-                        {
+                            break;
+                        case ClusterEvent.UnreachableMember member:
                             // replace current member with new member (might have different status, only address is used in == comparison)
                             State = State.Copy(unreachable: State.Unreachable.Remove(member.Member).Add(member.Member));
-                        })
-                        .With<ClusterEvent.ReachableMember>(member =>
-                        {
+                            break;
+                        case ClusterEvent.ReachableMember member:
                             State = State.Copy(unreachable: State.Unreachable.Remove(member.Member));
-                        })
-                        .With<ClusterEvent.IMemberEvent>(memberEvent =>
-                        {
+                            break;
+                        case ClusterEvent.IMemberEvent memberEvent:
                             var newUnreachable = State.Unreachable;
                             // replace current member with new member (might have different status, only address is used in == comparison)
                             if (State.Unreachable.Contains(memberEvent.Member))
@@ -139,20 +138,27 @@ namespace Akka.Cluster
                             State = State.Copy(
                                 members: State.Members.Remove(memberEvent.Member).Add(memberEvent.Member),
                                 unreachable: newUnreachable);
-                        })
-                        .With<ClusterEvent.LeaderChanged>(changed =>
-                        {
+                            break;
+                        case ClusterEvent.LeaderChanged changed:
                             State = State.Copy(leader: changed.Leader);
-                        })
-                        .With<ClusterEvent.RoleLeaderChanged>(changed =>
-                        {
+                            break;
+                        case ClusterEvent.RoleLeaderChanged changed:
                             State = State.Copy(roleLeaderMap: State.RoleLeaderMap.SetItem(changed.Role, changed.Leader));
-                        })
-                        .With<ClusterEvent.CurrentInternalStats>(stats =>
-                        {
+                            break;
+                        case ClusterEvent.CurrentInternalStats stats:
                             readView._latestStats = stats;
-                        })
-                        .With<ClusterEvent.ClusterShuttingDown>(_ => { });
+                            break;
+                        case ClusterEvent.ClusterShuttingDown _:
+                            break;
+                        case ClusterEvent.MemberTombstonesChanged changed:
+                            State = State.Copy(memberTombstones: changed.Tombstones);
+                            break;
+                    }
+
+                    if (clusterDomainEvent is ClusterEvent.IMemberEvent me && me.Member.Address.Equals(_readView.SelfAddress))
+                    {
+                        _readView._cachedSelf = me.Member;
+                    }
 
                     // once captured, optional verbose logging of event
                     if (!(clusterDomainEvent is ClusterEvent.SeenChanged) && _cluster.Settings.LogInfoVerbose)
@@ -164,6 +170,7 @@ namespace Akka.Cluster
                 Receive<ClusterEvent.CurrentClusterState>(state =>
                 {
                     State = state;
+                    _readView._cachedSelf = state.Members.SingleOrDefault(member => member.UniqueAddress == _cluster.SelfUniqueAddress) ?? _readView._cachedSelf;
                 });
             }
 
@@ -187,8 +194,7 @@ namespace Akka.Cluster
         {
             get
             {
-                return _state.Members.SingleOrDefault(member => member.UniqueAddress == _cluster.SelfUniqueAddress)
-                        ?? Member.Create(_cluster.SelfUniqueAddress, _cluster.SelfRoles, _cluster.Settings.AppVersion).Copy(MemberStatus.Removed);
+                return _cachedSelf;
             }
         }
 

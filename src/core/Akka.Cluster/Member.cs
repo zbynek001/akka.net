@@ -356,8 +356,9 @@ namespace Akka.Cluster
         /// </summary>
         /// <param name="a">The first collection of members.</param>
         /// <param name="b">The second collection of members.</param>
+        /// <param name="tombstones">Collection of member tombstones</param>
         /// <returns>An immutable hash set containing the members with the highest priority.</returns>
-        public static ImmutableHashSet<Member> PickHighestPriority(IEnumerable<Member> a, IEnumerable<Member> b)
+        public static ImmutableHashSet<Member> PickHighestPriority(IEnumerable<Member> a, IEnumerable<Member> b, ImmutableDictionary<UniqueAddress, long> tombstones)
         {
             // group all members by Address => Seq[Member]
             var groupedByAddress = (a.Concat(b)).GroupBy(x => x.UniqueAddress);
@@ -370,7 +371,13 @@ namespace Akka.Cluster
                 else
                 {
                     var m = g.First();
-                    if (!Gossip.RemoveUnreachableWithMemberStatus.Contains(m.Status)) acc.Add(m);
+
+                    if (tombstones.ContainsKey(m.UniqueAddress) || Gossip.RemoveUnreachableWithMemberStatus.Contains(m.Status))
+                    {
+                        // removed
+                    }
+                    else
+                        acc.Add(m);
                 }
             }
             return acc.ToImmutableHashSet();

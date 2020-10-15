@@ -55,15 +55,9 @@ namespace Akka.Cluster
             UnreachableNodesReaperInterval = clusterConfig.GetTimeSpan("unreachable-nodes-reaper-interval", null);
             PublishStatsInterval = clusterConfig.GetTimeSpanWithOffSwitch("publish-stats-interval");
 
-            var key = "down-removal-margin";
-            var useDownRemoval = clusterConfig.GetString(key, "");
-            DownRemovalMargin =
-                (
-                    useDownRemoval.ToLowerInvariant().Equals("off") ||
-                    useDownRemoval.ToLowerInvariant().Equals("false") ||
-                    useDownRemoval.ToLowerInvariant().Equals("no")
-                ) ? TimeSpan.Zero :
-                clusterConfig.GetTimeSpan("down-removal-margin", null);
+            PruneGossipTombstonesAfter = clusterConfig.GetTimeSpan("prune-gossip-tombstones-after");
+
+            DownRemovalMargin = clusterConfig.GetTimeSpanWithOffSwitch("down-removal-margin") ?? TimeSpan.Zero;
 
             AutoDownUnreachableAfter = clusterConfig.GetTimeSpanWithOffSwitch("auto-down-unreachable-after");
 
@@ -236,6 +230,8 @@ namespace Akka.Cluster
         /// </summary>
         [Obsolete("Use Cluster.DowningProvider.DownRemovalMargin [1.1.2]")]
         public TimeSpan DownRemovalMargin { get; }
+
+        public TimeSpan PruneGossipTombstonesAfter { get; }
 
         /// <summary>
         /// Determine whether or not to log heartbeat message in verbose mode.

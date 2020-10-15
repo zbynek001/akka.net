@@ -71,14 +71,15 @@ namespace Akka.Cluster
         public sealed class CurrentClusterState : Akka.Actor.INoSerializationVerificationNeeded
         {
             public CurrentClusterState() { }
-            public CurrentClusterState(System.Collections.Immutable.ImmutableSortedSet<Akka.Cluster.Member> members, System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> unreachable, System.Collections.Immutable.ImmutableHashSet<Akka.Actor.Address> seenBy, Akka.Actor.Address leader, System.Collections.Immutable.ImmutableDictionary<string, Akka.Actor.Address> roleLeaderMap) { }
+            public CurrentClusterState(System.Collections.Immutable.ImmutableSortedSet<Akka.Cluster.Member> members, System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> unreachable, System.Collections.Immutable.ImmutableHashSet<Akka.Actor.Address> seenBy, Akka.Actor.Address leader, System.Collections.Immutable.ImmutableDictionary<string, Akka.Actor.Address> roleLeaderMap, System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.UniqueAddress> memberTombstones) { }
             public System.Collections.Immutable.ImmutableHashSet<string> AllRoles { get; }
             public bool HasMoreThanOneAppVersion { get; }
             public Akka.Actor.Address Leader { get; }
+            public System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.UniqueAddress> MemberTombstones { get; }
             public System.Collections.Immutable.ImmutableSortedSet<Akka.Cluster.Member> Members { get; }
             public System.Collections.Immutable.ImmutableHashSet<Akka.Actor.Address> SeenBy { get; }
             public System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> Unreachable { get; }
-            public Akka.Cluster.ClusterEvent.CurrentClusterState Copy(System.Collections.Immutable.ImmutableSortedSet<Akka.Cluster.Member> members = null, System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> unreachable = null, System.Collections.Immutable.ImmutableHashSet<Akka.Actor.Address> seenBy = null, Akka.Actor.Address leader = null, System.Collections.Immutable.ImmutableDictionary<string, Akka.Actor.Address> roleLeaderMap = null) { }
+            public Akka.Cluster.ClusterEvent.CurrentClusterState Copy(System.Collections.Immutable.ImmutableSortedSet<Akka.Cluster.Member> members = null, System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> unreachable = null, System.Collections.Immutable.ImmutableHashSet<Akka.Actor.Address> seenBy = null, Akka.Actor.Address leader = null, System.Collections.Immutable.ImmutableDictionary<string, Akka.Actor.Address> roleLeaderMap = null, System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.UniqueAddress> memberTombstones = null) { }
             public Akka.Actor.Address RoleLeader(string role) { }
         }
         public interface IClusterDomainEvent : Akka.Event.IDeadLetterSuppression { }
@@ -204,6 +205,7 @@ namespace Akka.Cluster
         public System.Collections.Immutable.ImmutableDictionary<string, int> MinNrOfMembersOfRole { get; }
         public int MonitoredByNrOfMembers { get; }
         public System.TimeSpan PeriodicTasksInitialDelay { get; }
+        public System.TimeSpan PruneGossipTombstonesAfter { get; }
         public System.Nullable<System.TimeSpan> PublishStatsInterval { get; }
         public int ReduceGossipDifferentViewProbability { get; }
         public System.Nullable<System.TimeSpan> RetryUnsuccessfulJoinAfter { get; }
@@ -244,7 +246,7 @@ namespace Akka.Cluster
         public bool HasRole(string role) { }
         public static Akka.Cluster.Member HighestPriorityOf(Akka.Cluster.Member m1, Akka.Cluster.Member m2) { }
         public bool IsOlderThan(Akka.Cluster.Member other) { }
-        public static System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> PickHighestPriority(System.Collections.Generic.IEnumerable<Akka.Cluster.Member> a, System.Collections.Generic.IEnumerable<Akka.Cluster.Member> b) { }
+        public static System.Collections.Immutable.ImmutableHashSet<Akka.Cluster.Member> PickHighestPriority(System.Collections.Generic.IEnumerable<Akka.Cluster.Member> a, System.Collections.Generic.IEnumerable<Akka.Cluster.Member> b, System.Collections.Immutable.ImmutableDictionary<Akka.Cluster.UniqueAddress, long> tombstones) { }
         public static System.Collections.Immutable.ImmutableSortedSet<Akka.Cluster.Member> PickNextTransition(System.Collections.Generic.IEnumerable<Akka.Cluster.Member> a, System.Collections.Generic.IEnumerable<Akka.Cluster.Member> b) { }
         public static Akka.Cluster.Member PickNextTransition(Akka.Cluster.Member a, Akka.Cluster.Member b) { }
         public override string ToString() { }

@@ -290,7 +290,7 @@ namespace Akka.Remote
         public RemoteWatcher(Akka.Remote.IFailureDetectorRegistry<Akka.Actor.Address> failureDetector, System.TimeSpan heartbeatInterval, System.TimeSpan unreachableReaperInterval, System.TimeSpan heartbeatExpectedResponseAfter) { }
         protected System.Collections.Generic.HashSet<Akka.Actor.Address> Unreachable { get; }
         protected System.Collections.Generic.ICollection<Akka.Actor.Address> WatchingNodes { get; }
-        protected void AddWatching(Akka.Actor.IInternalActorRef watchee, Akka.Actor.IInternalActorRef watcher) { }
+        protected virtual void AddWatch(Akka.Actor.IInternalActorRef watchee, Akka.Actor.IInternalActorRef watcher) { }
         protected override void OnReceive(object message) { }
         protected override void PostStop() { }
         public static Akka.Actor.Props Props(Akka.Remote.IFailureDetectorRegistry<Akka.Actor.Address> failureDetector, System.TimeSpan heartbeatInterval, System.TimeSpan unreachableReaperInterval, System.TimeSpan heartbeatExpectedResponseAfter) { }

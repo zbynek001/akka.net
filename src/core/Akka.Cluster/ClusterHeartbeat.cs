@@ -18,11 +18,16 @@ namespace Akka.Cluster
 {
     /// <summary>
     /// INTERNAL API
-    /// 
+    ///
     /// Receives <see cref="ClusterHeartbeatSender.Heartbeat"/> messages and replies.
     /// </summary>
     internal sealed class ClusterHeartbeatReceiver : ReceiveActor
     {
+        internal const string Name = "heartbeatReceiver";
+
+        internal static ActorPath Path(Address address) =>
+           new RootActorPath(address) / "system" / "cluster" / Name;
+
         private readonly Lazy<ClusterHeartbeatSender.HeartbeatRsp> _selfHeartbeatRsp;
 
         /// <summary>
@@ -82,7 +87,7 @@ namespace Akka.Cluster
                 tickInitialDelay,
                 _cluster.Settings.HeartbeatInterval,
                 Self,
-                new HeartbeatTick(),
+                HeartbeatTick.Instance,
                 Self);
 
             Initializing();
@@ -114,7 +119,7 @@ namespace Akka.Cluster
         /// </summary>
         private ActorSelection HeartbeatReceiver(Address address)
         {
-            return Context.ActorSelection(new RootActorPath(address) / "system" / "cluster" / "heartbeatReceiver");
+            return Context.ActorSelection(ClusterHeartbeatReceiver.Path(address));
         }
 
         private void Initializing()
@@ -223,7 +228,7 @@ namespace Akka.Cluster
                     "default dispatcher, CPU overload, or GC.",
                     _cluster.SelfAddress, (now - _tickTimestamp).TotalMilliseconds, _cluster.Settings.HeartbeatInterval.TotalMilliseconds);
             }
-            
+
             _tickTimestamp = DateTime.UtcNow;
         }
 
@@ -323,7 +328,14 @@ namespace Akka.Cluster
         /// <summary>
         /// Sent to self only
         /// </summary>
-        private class HeartbeatTick { }
+        private class HeartbeatTick
+        {
+            public static readonly HeartbeatTick Instance = new HeartbeatTick();
+
+            private HeartbeatTick()
+            {
+            }
+        }
 
         /// <summary>
         /// TBD
@@ -516,10 +528,10 @@ namespace Akka.Cluster
 
     /// <summary>
     /// INTERNAL API
-    /// 
+    ///
     /// Data structure for picking heartbeat receivers. The node ring is shuffled
     /// by deterministic hashing to avoid picking physically co-located neighbors.
-    /// 
+    ///
     /// It is immutable, i.e. the methods all return new instances.
     /// </summary>
     internal sealed class HeartbeatNodeRing
@@ -602,8 +614,7 @@ namespace Akka.Cluster
                 // The reason for not limiting it to strictly monitoredByNrOfMembers is that the leader must
                 // be able to continue its duties (e.g. removal of downed nodes) when many nodes are shutdown
                 // at the same time and nobody in the remaining cluster is monitoring some of the shutdown nodes.
-                Func<int, IEnumerator<UniqueAddress>, ImmutableSortedSet<UniqueAddress>, (int, ImmutableSortedSet<UniqueAddress>)> take = null;
-                take = (n, iter, acc) =>
+                (int, ImmutableSortedSet<UniqueAddress>) Take(int n, IEnumerator<UniqueAddress> iter, ImmutableSortedSet<UniqueAddress> acc)
                 {
                     if (iter.MoveNext() == false || n == 0)
                     {
@@ -615,26 +626,26 @@ namespace Akka.Cluster
                         var isUnreachable = Unreachable.Contains(next);
                         if (isUnreachable && acc.Count >= MonitoredByNumberOfNodes)
                         {
-                            return take(n, iter, acc); // skip the unreachable, since we have already picked `MonitoredByNumberOfNodes`
+                            return Take(n, iter, acc); // skip the unreachable, since we have already picked `MonitoredByNumberOfNodes`
                         }
                         else if (isUnreachable)
                         {
-                            return take(n, iter, acc.Add(next)); // include the unreachable, but don't count it
+                            return Take(n, iter, acc.Add(next)); // include the unreachable, but don't count it
                         }
                         else
                         {
-                            return take(n - 1, iter, acc.Add(next)); // include the reachable
+                            return Take(n - 1, iter, acc.Add(next)); // include the reachable
                         }
                     }
                 };
 
-                var tuple = take(MonitoredByNumberOfNodes, NodeRing().From(sender).Skip(1).GetEnumerator(), ImmutableSortedSet<UniqueAddress>.Empty);
+                var tuple = Take(MonitoredByNumberOfNodes, NodeRing().From(sender).Skip(1).GetEnumerator(), ImmutableSortedSet<UniqueAddress>.Empty);
                 var remaining = tuple.Item1;
                 var slice1 = tuple.Item2;
 
-                IImmutableSet<UniqueAddress> slice = remaining == 0 
-                    ? slice1 
-                    : take(remaining, NodeRing().Until(sender).Where(c => !c.Equals(sender)).GetEnumerator(), slice1).Item2;
+                IImmutableSet<UniqueAddress> slice = remaining == 0
+                    ? slice1
+                    : Take(remaining, NodeRing().Until(sender).Where(c => !c.Equals(sender)).GetEnumerator(), slice1).Item2;
 
                 return slice.ToImmutableHashSet();
             }
@@ -679,7 +690,7 @@ namespace Akka.Cluster
         public static HeartbeatNodeRing operator -(HeartbeatNodeRing ring, UniqueAddress node)
         {
             return ring.Nodes.Contains(node) || ring.Unreachable.Contains(node)
-                ? ring.Copy(nodes: ring.Nodes.Remove(node), unreachable: ring.Unreachable.Remove(node)) 
+                ? ring.Copy(nodes: ring.Nodes.Remove(node), unreachable: ring.Unreachable.Remove(node))
                 : ring;
         }
 

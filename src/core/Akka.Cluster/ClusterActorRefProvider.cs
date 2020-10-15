@@ -21,7 +21,7 @@ namespace Akka.Cluster
 {
     /// <summary>
     /// INTERNAL API.
-    /// 
+    ///
     /// Marker interface for signifying that this <see cref="IActorRefProvider"/> can be used in combination with the
     /// <see cref="Cluster"/> ActorSystem extension.
     /// </summary>
@@ -30,7 +30,7 @@ namespace Akka.Cluster
 
     /// <summary>
     /// INTERNAL API
-    /// 
+    ///
     /// The `ClusterActorRefProvider` will load the <see cref="Cluster"/>
     /// extension, i.e. the cluster will automatically be started when
     /// the `ClusterActorRefProvider` is used.
@@ -44,7 +44,7 @@ namespace Akka.Cluster
         /// <param name="systemName">TBD</param>
         /// <param name="settings">TBD</param>
         /// <param name="eventStream">TBD</param>
-        public ClusterActorRefProvider(string systemName, Settings settings, EventStream eventStream /*DynamicAccess*/)
+        public ClusterActorRefProvider(string systemName, Settings settings, EventStream eventStream)
             : base(systemName, settings, eventStream)
         {
             var clusterConfig = ClusterConfigFactory.Default();
@@ -113,7 +113,7 @@ namespace Akka.Cluster
 
         /// <summary>
         /// Creates a copy of the current instance.
-        /// 
+        ///
         /// <note>
         /// This method returns the singleton instance of this scope.
         /// </note>
@@ -127,7 +127,7 @@ namespace Akka.Cluster
 
     /// <summary>
     /// INTERNAL API
-    /// 
+    ///
     /// Deployer of cluster-aware routers
     /// </summary>
     internal class ClusterDeployer : RemoteDeployer
@@ -178,18 +178,18 @@ namespace Akka.Cluster
                     if (deploy.RouterConfig is RemoteRouterConfig)
                         throw new ConfigurationException($"Cluster deployment can't be combined with [{deploy.Config}]");
 
-                    if (deploy.RouterConfig is Pool)
+                    if (deploy.RouterConfig is Pool pool)
                     {
                         return
                             deploy.WithScope(scope: ClusterScope.Instance)
-                                .WithRouterConfig(new ClusterRouterPool(deploy.RouterConfig as Pool,
+                                .WithRouterConfig(new ClusterRouterPool(pool,
                                     ClusterRouterPoolSettings.FromConfig(deploy.Config)));
                     }
-                    else if (deploy.RouterConfig is Group)
+                    else if (deploy.RouterConfig is Group group)
                     {
                         return
                             deploy.WithScope(scope: ClusterScope.Instance)
-                                .WithRouterConfig(new ClusterRouterGroup(deploy.RouterConfig as Group,
+                                .WithRouterConfig(new ClusterRouterGroup(group,
                                     ClusterRouterGroupSettings.FromConfig(deploy.Config)));
                     }
                     else

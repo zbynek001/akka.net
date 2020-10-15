@@ -45,7 +45,7 @@ namespace Akka.Cluster
             {
                 // MemberRemoved is needed in case it was downed instead
                 _cluster.Leave(_cluster.SelfAddress);
-                _cluster.Subscribe(Self, typeof(ClusterEvent.MemberLeft), typeof(ClusterEvent.MemberRemoved), typeof(ClusterEvent.MemberDowned));
+                _cluster.Subscribe(Self, typeof(ClusterEvent.MemberLeft), typeof(ClusterEvent.MemberRemoved));
                 var s = Sender;
                 Become(() => WaitingLeaveCompleted(s));
             });

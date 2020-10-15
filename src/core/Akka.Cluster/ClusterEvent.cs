@@ -84,7 +84,8 @@ namespace Akka.Cluster
                 ImmutableHashSet<Member>.Empty,
                 ImmutableHashSet<Address>.Empty,
                 null,
-                ImmutableDictionary<string, Address>.Empty)
+                ImmutableDictionary<string, Address>.Empty,
+                ImmutableHashSet<UniqueAddress>.Empty)
             { }
 
             /// <summary>
@@ -95,18 +96,21 @@ namespace Akka.Cluster
             /// <param name="seenBy">The set of nodes who have seen us.</param>
             /// <param name="leader">The leader of the cluster.</param>
             /// <param name="roleLeaderMap">The list of role leaders.</param>
+            /// <param name="memberTombstones">The set of member tombstones </param>
             public CurrentClusterState(
                 ImmutableSortedSet<Member> members,
                 ImmutableHashSet<Member> unreachable,
                 ImmutableHashSet<Address> seenBy,
                 Address leader,
-                ImmutableDictionary<string, Address> roleLeaderMap)
+                ImmutableDictionary<string, Address> roleLeaderMap,
+                ImmutableHashSet<UniqueAddress> memberTombstones)
             {
                 _members = members;
                 _unreachable = unreachable;
                 _seenBy = seenBy;
                 _leader = leader;
                 _roleLeaderMap = roleLeaderMap;
+                MemberTombstones = memberTombstones;
             }
 
             /// <summary>
@@ -158,6 +162,11 @@ namespace Akka.Cluster
             }
 
             /// <summary>
+            ///
+            /// </summary>
+            public ImmutableHashSet<UniqueAddress> MemberTombstones { get; }
+
+            /// <summary>
             /// Get address of current leader, if any, within the role set
             /// </summary>
             /// <param name="role">The role we wish to check.</param>
@@ -194,20 +203,23 @@ namespace Akka.Cluster
             /// <param name="seenBy">TBD</param>
             /// <param name="leader">TBD</param>
             /// <param name="roleLeaderMap">TBD</param>
+            /// <param name="memberTombstones">TBD</param>
             /// <returns>TBD</returns>
             public CurrentClusterState Copy(
                 ImmutableSortedSet<Member> members = null,
                 ImmutableHashSet<Member> unreachable = null,
                 ImmutableHashSet<Address> seenBy = null,
                 Address leader = null,
-                ImmutableDictionary<string, Address> roleLeaderMap = null)
+                ImmutableDictionary<string, Address> roleLeaderMap = null,
+                ImmutableHashSet<UniqueAddress> memberTombstones = null)
             {
                 return new CurrentClusterState(
                     members ?? _members,
                     unreachable ?? _unreachable,
                     seenBy ?? _seenBy,
                     leader ?? (_leader != null ? (Address)_leader.Clone() : null),
-                    roleLeaderMap ?? _roleLeaderMap);
+                    roleLeaderMap ?? _roleLeaderMap,
+                    memberTombstones ?? MemberTombstones);
             }
         }
 
@@ -413,8 +425,6 @@ namespace Akka.Cluster
             public MemberRemoved(Member member, MemberStatus previousStatus)
                 : base(member, MemberStatus.Removed)
             {
-                if (member.Status != MemberStatus.Removed)
-                    throw new ArgumentException($"Expected Removed status, got {member}");
                 _previousStatus = previousStatus;
             }
 
@@ -800,7 +810,7 @@ namespace Akka.Cluster
             /// <summary>
             /// TBD
             /// </summary>
-            public VectorClockStats SeenBy
+            public VectorClockStats VclockStats
             {
                 get { return _vclockStats; }
             }
@@ -829,13 +839,53 @@ namespace Akka.Cluster
         /// <summary>
         /// TBD
         /// </summary>
+        internal sealed class MemberTombstonesChanged : IClusterDomainEvent
+        {
+            /// <summary>
+            /// TBD
+            /// </summary>
+            /// <param name="tombstones">TBD</param>
+            public MemberTombstonesChanged(ImmutableHashSet<UniqueAddress> tombstones)
+            {
+                Tombstones = tombstones;
+            }
+
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public ImmutableHashSet<UniqueAddress> Tombstones { get; }
+
+            /// <inheritdoc/>
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    var hash = 17;
+                    foreach (var i in Tombstones.OrderBy(j => j))
+                        hash = hash * 23 + i.GetHashCode();
+                    return hash;
+                }
+            }
+
+            /// <inheritdoc/>
+            public override bool Equals(object obj)
+            {
+                if (obj is MemberTombstonesChanged other)
+                    return Tombstones.SetEquals(other.Tombstones);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// TBD
+        /// </summary>
         /// <param name="oldGossip">TBD</param>
         /// <param name="newGossip">TBD</param>
         /// <param name="selfUniqueAddress">TBD</param>
         /// <returns>TBD</returns>
         internal static ImmutableList<UnreachableMember> DiffUnreachable(Gossip oldGossip, Gossip newGossip, UniqueAddress selfUniqueAddress)
         {
-            if (newGossip.Equals(oldGossip))
+            if (ReferenceEquals(newGossip, oldGossip))
             {
                 return ImmutableList<UnreachableMember>.Empty;
             }
@@ -856,7 +906,7 @@ namespace Akka.Cluster
         /// <returns>TBD</returns>
         internal static ImmutableList<ReachableMember> DiffReachable(Gossip oldGossip, Gossip newGossip, UniqueAddress selfUniqueAddress)
         {
-            if (newGossip.Equals(oldGossip))
+            if (ReferenceEquals(newGossip, oldGossip))
             {
                 return ImmutableList<ReachableMember>.Empty;
             }
@@ -876,7 +926,7 @@ namespace Akka.Cluster
         /// <returns>A possibly empty set of membership events to be published to all subscribers.</returns>
         internal static ImmutableList<IMemberEvent> DiffMemberEvents(Gossip oldGossip, Gossip newGossip)
         {
-            if (newGossip.Equals(oldGossip))
+            if (ReferenceEquals(newGossip, oldGossip))
             {
                 return ImmutableList<IMemberEvent>.Empty;
             }
@@ -984,7 +1034,7 @@ namespace Akka.Cluster
         /// <returns>TBD</returns>
         internal static ImmutableList<SeenChanged> DiffSeen(Gossip oldGossip, Gossip newGossip, UniqueAddress selfUniqueAddress)
         {
-            if (newGossip.Equals(oldGossip))
+            if (ReferenceEquals(newGossip, oldGossip))
             {
                 return ImmutableList<SeenChanged>.Empty;
             }
@@ -1007,10 +1057,17 @@ namespace Akka.Cluster
         /// <returns>TBD</returns>
         internal static ImmutableList<ReachabilityChanged> DiffReachability(Gossip oldGossip, Gossip newGossip)
         {
-            if (newGossip.Overview.Reachability.Equals(oldGossip.Overview.Reachability))
+            if (ReferenceEquals(newGossip.Overview.Reachability, oldGossip.Overview.Reachability))
                 return ImmutableList<ReachabilityChanged>.Empty;
 
             return ImmutableList.Create(new ReachabilityChanged(newGossip.Overview.Reachability));
+        }
+
+        internal static ImmutableList<MemberTombstonesChanged> DiffTombstones(Gossip oldGossip, Gossip newGossip)
+        {
+            if (newGossip.Tombstones.DictionaryEqual(oldGossip.Tombstones))
+                return ImmutableList<MemberTombstonesChanged>.Empty;
+            return ImmutableList.Create(new MemberTombstonesChanged(newGossip.Tombstones.Keys.ToImmutableHashSet()));
         }
     }
 
@@ -1076,7 +1133,8 @@ namespace Akka.Cluster
                 {
                     var leader = _latestGossip.RoleLeader(r, _selfUniqueAddress);
                     return leader == null ? null : leader.Address;
-                }));
+                }),
+                memberTombstones: _latestGossip.Tombstones.Keys.ToImmutableHashSet());
             receiver.Tell(state);
         }
 
@@ -1116,6 +1174,7 @@ namespace Akka.Cluster
 
         private void PublishDiff(Gossip oldGossip, Gossip newGossip, Action<object> pub)
         {
+            foreach (var @event in ClusterEvent.DiffTombstones(oldGossip, newGossip)) pub(@event);
             foreach (var @event in ClusterEvent.DiffMemberEvents(oldGossip, newGossip)) pub(@event);
             foreach (var @event in ClusterEvent.DiffUnreachable(oldGossip, newGossip, _selfUniqueAddress)) pub(@event);
             foreach (var @event in ClusterEvent.DiffReachable(oldGossip, newGossip, _selfUniqueAddress)) pub(@event);

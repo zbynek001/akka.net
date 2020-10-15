@@ -20,7 +20,7 @@ namespace Akka.Remote
 {
     /// <summary>
     /// INTERNAL API
-    /// 
+    ///
     /// Remote nodes with actors that are watched are monitored by this actor to be able
     /// to detect network failures and process crashes. <see cref="RemoteActorRefProvider"/>
     /// intercepts Watch and Unwatch system messages and sends corresponding
@@ -286,8 +286,9 @@ namespace Akka.Remote
             /// </summary>
             /// <param name="watching">TBD</param>
             /// <param name="watchingNodes">TBD</param>
-            public Stats(int watching, int watchingNodes) : this(watching, watchingNodes, 
-                ImmutableHashSet<(IActorRef, IActorRef)>.Empty, ImmutableHashSet<Address>.Empty) { }
+            public Stats(int watching, int watchingNodes) : this(watching, watchingNodes,
+                ImmutableHashSet<(IActorRef, IActorRef)>.Empty, ImmutableHashSet<Address>.Empty)
+            { }
 
             /// <summary>
             /// TBD
@@ -389,11 +390,11 @@ namespace Akka.Remote
         private readonly IScheduler _scheduler = Context.System.Scheduler;
         private readonly IRemoteActorRefProvider _remoteProvider;
         private readonly HeartbeatRsp _selfHeartbeatRspMsg = new HeartbeatRsp(AddressUidExtension.Uid(Context.System));
-       
+
         /// <summary>
         ///  Actors that this node is watching, map of watchee --> Set(watchers)
         /// </summary>
-        protected readonly Dictionary<IInternalActorRef, HashSet<IInternalActorRef>>  Watching = new Dictionary<IInternalActorRef, HashSet<IInternalActorRef>>();
+        protected readonly Dictionary<IInternalActorRef, HashSet<IInternalActorRef>> Watching = new Dictionary<IInternalActorRef, HashSet<IInternalActorRef>>();
 
         /// <summary>
         /// Nodes that this node is watching, i.e. expecting heartbeats from these nodes. Map of address --> Set(watchee) on this address.
@@ -438,7 +439,7 @@ namespace Akka.Remote
             else if (message is WatchRemote)
             {
                 var watchRemote = (WatchRemote)message;
-                AddWatching(watchRemote.Watchee, watchRemote.Watcher);
+                AddWatch(watchRemote.Watchee, watchRemote.Watcher);
             }
             else if (message is UnwatchRemote)
             {
@@ -540,10 +541,10 @@ namespace Akka.Remote
         /// <param name="watchee">TBD</param>
         /// <param name="watcher">TBD</param>
         /// <exception cref="InvalidOperationException">TBD</exception>
-        protected void AddWatching(IInternalActorRef watchee, IInternalActorRef watcher)
+        protected virtual void AddWatch(IInternalActorRef watchee, IInternalActorRef watcher)
         {
             // TODO: replace with Code Contracts assertion
-            if(watcher.Equals(Self)) throw new InvalidOperationException("Watcher cannot be the RemoteWatcher!");
+            if (watcher.Equals(Self)) throw new InvalidOperationException("Watcher cannot be the RemoteWatcher!");
             Log.Debug("Watching: [{0} -> {1}]", watcher.Path, watchee.Path);
 
             if (Watching.TryGetValue(watchee, out var watching))
@@ -631,7 +632,7 @@ namespace Akka.Remote
             _failureDetector.Remove(watcheeAddress);
         }
 
-      
+
         private void ProcessTerminated(IInternalActorRef watchee, bool existenceConfirmed, bool addressTerminated)
         {
             Log.Debug("Watchee terminated: [{0}]", watchee.Path);

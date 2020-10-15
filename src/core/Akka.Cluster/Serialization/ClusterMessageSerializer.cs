@@ -225,7 +225,7 @@ namespace Akka.Cluster.Serialization
         private static Proto.Msg.Gossip GossipToProto(Gossip gossip)
         {
             var allMembers = gossip.Members.ToList();
-            var allAddresses = gossip.Members.Select(x => x.UniqueAddress).ToList();
+            var allAddresses = gossip.Members.Select(x => x.UniqueAddress).Union(gossip.Tombstones.Keys).ToList();
             var addressMapping = allAddresses.ZipWithIndex();
             var allRoles = allMembers.Aggregate(ImmutableHashSet.Create<string>(), (set, member) => set.Union(member.Roles));
             var roleMapping = allRoles.ZipWithIndex();
@@ -249,6 +249,14 @@ namespace Akka.Cluster.Serialization
                 return protoMember;
             }
 
+            Proto.Msg.Tombstone TombstoneToProto(KeyValuePair<UniqueAddress, long> t)
+            {
+                var protoTombstone = new Proto.Msg.Tombstone();
+                protoTombstone.AddressIndex = MapUniqueAddress(t.Key);
+                protoTombstone.Timestamp = t.Value;
+                return protoTombstone;
+            }
+
             var reachabilityProto = ReachabilityToProto(gossip.Overview.Reachability, addressMapping);
             var membersProtos = gossip.Members.Select((Func<Member, Proto.Msg.Member>)MemberToProto);
             var seenProtos = gossip.Overview.Seen.Select((Func<UniqueAddress, int>)MapUniqueAddress);
@@ -264,6 +272,7 @@ namespace Akka.Cluster.Serialization
             message.Members.AddRange(membersProtos);
             message.Overview = overview;
             message.Version = VectorClockToProto(gossip.Version, hashMapping);
+            message.Tombstones.AddRange(gossip.Tombstones.Select(TombstoneToProto));
             message.AllAppVersions.AddRange(allAppVersions);
             return message;
         }
@@ -284,12 +293,18 @@ namespace Akka.Cluster.Serialization
                     appVersionMapping.Any() ? appVersionMapping[member.AppVersionIndex] : AppVersion.Zero
                     );
 
+            KeyValuePair<UniqueAddress, long> TombstoneFromProto(Proto.Msg.Tombstone tombstone)
+            {
+                return new KeyValuePair<UniqueAddress, long>(addressMapping[tombstone.AddressIndex], tombstone.Timestamp);
+            }
+
             var members = gossip.Members.Select((Func<Proto.Msg.Member, Member>)MemberFromProto).ToImmutableSortedSet(Member.Ordering);
             var reachability = ReachabilityFromProto(gossip.Overview.ObserverReachability, addressMapping);
             var seen = gossip.Overview.Seen.Select(x => addressMapping[x]).ToImmutableHashSet();
             var overview = new GossipOverview(seen, reachability);
+            var tombstones = gossip.Tombstones.Select(TombstoneFromProto).ToImmutableDictionary();
 
-            return new Gossip(members, overview, VectorClockFrom(gossip.Version, hashMapping));
+            return new Gossip(members, overview, VectorClockFrom(gossip.Version, hashMapping), tombstones);
         }
 
         private static IEnumerable<Proto.Msg.ObserverReachability> ReachabilityToProto(Reachability reachability, Dictionary<UniqueAddress, int> addressMapping)

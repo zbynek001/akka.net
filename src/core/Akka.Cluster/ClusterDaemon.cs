@@ -277,7 +277,7 @@ namespace Akka.Cluster
         /// If a node is uninitialized it will reply to `InitJoin` with
         /// <see cref="InitJoinNack"/>.
         /// </summary>
-        internal class JoinSeenNode
+        internal class JoinSeenNode : IDeadLetterSuppression
         {
         }
 
@@ -898,7 +898,7 @@ namespace Akka.Cluster
         {
             _coreSupervisor = Context.ActorOf(Props.Create<ClusterCoreSupervisor>(), "core");
 
-            Context.ActorOf(Props.Create<ClusterHeartbeatReceiver>(), "heartbeatReceiver");
+            Context.ActorOf(Props.Create<ClusterHeartbeatReceiver>(), ClusterHeartbeatReceiver.Name);
         }
 
         protected override void PostStop()
@@ -992,11 +992,6 @@ namespace Akka.Cluster
 
         private readonly VectorClock.Node _vclockNode;
 
-        internal static string VclockName(UniqueAddress node)
-        {
-            return node.Address + "-" + node.Uid;
-        }
-
         private bool _isCurrentlyLeader;
 
         // note that self is not initially member,
@@ -1029,7 +1024,7 @@ namespace Akka.Cluster
             _cluster = Cluster.Get(Context.System);
             _publisher = publisher;
             SelfUniqueAddress = _cluster.SelfUniqueAddress;
-            _vclockNode = VectorClock.Node.Create(VclockName(SelfUniqueAddress));
+            _vclockNode = VectorClock.Node.Create(Gossip.VclockName(SelfUniqueAddress));
             var settings = _cluster.Settings;
             var scheduler = _cluster.Scheduler;
             _seedNodes = _cluster.Settings.SeedNodes;
@@ -1156,35 +1151,38 @@ namespace Akka.Cluster
             // ExitingCompleted sent via CoordinatedShutdown to continue the leaving process.
             _exitingTasksInProgress = false;
 
-            // mark as seen
-            _latestGossip = _latestGossip.Seen(SelfUniqueAddress);
-            AssertLatestGossip();
-            Publish(_latestGossip);
-
-            // Let others know (best effort) before shutdown. Otherwise they will not see
-            // convergence of the Exiting state until they have detected this node as
-            // unreachable and the required downing has finished. They will still need to detect
-            // unreachable, but Exiting unreachable will be removed without downing, i.e.
-            // normally the leaving of a leader will be graceful without the need
-            // for downing. However, if those final gossip messages never arrive it is
-            // alright to require the downing, because that is probably caused by a
-            // network failure anyway.
-            SendGossipRandom(NumberOfGossipsBeforeShutdownWhenLeaderExits);
-
-            // send ExitingConfirmed to two potential leaders
-            var membersWithoutSelf = _latestGossip.Members.Where(m => !m.UniqueAddress.Equals(SelfUniqueAddress))
-                .ToImmutableSortedSet();
-            var leader = _latestGossip.LeaderOf(membersWithoutSelf, SelfUniqueAddress);
-            if (leader != null)
+            if (_latestGossip.GetMember(SelfUniqueAddress).Status != MemberStatus.Removed)
             {
-                ClusterCore(leader.Address).Tell(new InternalClusterAction.ExitingConfirmed(SelfUniqueAddress));
-                var leader2 =
-                    _latestGossip.LeaderOf(
-                        membersWithoutSelf.Where(x => !x.UniqueAddress.Equals(leader)).ToImmutableSortedSet(),
-                        SelfUniqueAddress);
-                if (leader2 != null)
+                // mark as seen
+                _latestGossip = _latestGossip.Seen(SelfUniqueAddress);
+                AssertLatestGossip();
+                Publish(_latestGossip);
+
+                // Let others know (best effort) before shutdown. Otherwise they will not see
+                // convergence of the Exiting state until they have detected this node as
+                // unreachable and the required downing has finished. They will still need to detect
+                // unreachable, but Exiting unreachable will be removed without downing, i.e.
+                // normally the leaving of a leader will be graceful without the need
+                // for downing. However, if those final gossip messages never arrive it is
+                // alright to require the downing, because that is probably caused by a
+                // network failure anyway.
+                SendGossipRandom(NumberOfGossipsBeforeShutdownWhenLeaderExits);
+
+                // send ExitingConfirmed to two potential leaders
+                var membersWithoutSelf = _latestGossip.Members.Where(m => !m.UniqueAddress.Equals(SelfUniqueAddress))
+                    .ToImmutableSortedSet();
+                var leader = _latestGossip.LeaderOf(membersWithoutSelf, SelfUniqueAddress);
+                if (leader != null)
                 {
-                    ClusterCore(leader2.Address).Tell(new InternalClusterAction.ExitingConfirmed(SelfUniqueAddress));
+                    ClusterCore(leader.Address).Tell(new InternalClusterAction.ExitingConfirmed(SelfUniqueAddress));
+                    var leader2 =
+                        _latestGossip.LeaderOf(
+                            membersWithoutSelf.Where(x => !x.UniqueAddress.Equals(leader)).ToImmutableSortedSet(),
+                            SelfUniqueAddress);
+                    if (leader2 != null)
+                    {
+                        ClusterCore(leader2.Address).Tell(new InternalClusterAction.ExitingConfirmed(SelfUniqueAddress));
+                    }
                 }
             }
 
@@ -1240,6 +1238,11 @@ namespace Akka.Cluster
                 case InternalClusterAction.ISubscriptionMessage isub:
                     _publisher.Forward(isub);
                     break;
+
+                case InternalClusterAction.Welcome w:
+                    Welcome(w.From.Address, w.From, w.Gossip);
+                    break;
+
                 case InternalClusterAction.ITick _:
                     if (_joinSeedNodesDeadline != null && _joinSeedNodesDeadline.IsOverdue) JoinSeedNodesWasUnsuccessful();
                     break;
@@ -1332,6 +1335,7 @@ namespace Akka.Cluster
                 "heartbeatSender");
             // make sure that join process is stopped
             StopSeedNodeProcess();
+            _joinSeedNodesDeadline = null;
             Context.Become(Initialized);
         }
 
@@ -1454,7 +1458,7 @@ namespace Akka.Cluster
             else
             {
                 // TODO: add config checking
-                _cluster.LogInfo("Sending InitJoinNack message from node [{0}] to [{1}]", SelfUniqueAddress.Address,
+                _cluster.LogInfo("Sending InitJoinAck message from node [{0}] to [{1}]", SelfUniqueAddress.Address,
                     Sender);
                 Sender.Tell(new InternalClusterAction.InitJoinAck(_cluster.SelfAddress));
             }
@@ -1561,6 +1565,7 @@ namespace Akka.Cluster
         /// </summary>
         /// <param name="node">TBD</param>
         /// <param name="roles">TBD</param>
+        /// <param name="appVersion">TBD</param>
         public void Joining(UniqueAddress node, ImmutableHashSet<string> roles, AppVersion appVersion)
         {
             var selfStatus = _latestGossip.GetMember(SelfUniqueAddress).Status;
@@ -1736,14 +1741,7 @@ namespace Akka.Cluster
                 else
                     _cluster.LogInfo("Marking unreachable node [{0}] as [{1}]", member.Address, MemberStatus.Down);
 
-                // replace member (changed status)
-                var newMembers = localMembers.Remove(member).Add(member.Copy(MemberStatus.Down));
-                // remove nodes marked as DOWN from the 'seen' table
-                var newSeen = localSeen.Remove(member.UniqueAddress);
-
-                //update gossip overview
-                var newOverview = localOverview.Copy(seen: newSeen);
-                var newGossip = localGossip.Copy(members: newMembers, overview: newOverview); //update gossip
+                var newGossip = localGossip.MarkAsDown(member);
                 UpdateLatestGossip(newGossip);
 
                 Publish(_latestGossip);
@@ -1784,11 +1782,11 @@ namespace Akka.Cluster
         public void ReceiveGossipStatus(GossipStatus status)
         {
             var from = status.From;
-            if (!_latestGossip.Overview.Reachability.IsReachable(SelfUniqueAddress, from))
-                _cluster.LogInfo("Ignoring received gossip status from unreachable [{0}]", from);
-            else if (_latestGossip.Members.All(m => !m.UniqueAddress.Equals(from)))
+            if (!_latestGossip.HasMember(from))
                 _cluster.LogInfo("Cluster Node [{0}] - Ignoring received gossip status from unknown [{1}]",
                     _cluster.SelfAddress, from);
+            else if (!_latestGossip.Overview.Reachability.IsReachable(SelfUniqueAddress, from))
+                _cluster.LogInfo("Ignoring received gossip status from unreachable [{0}]", from);
             else
             {
                 var comparison = status.Version.CompareTo(_latestGossip.Version);
@@ -1845,7 +1843,7 @@ namespace Akka.Cluster
             var remoteGossip = envelope.Gossip;
             var localGossip = _latestGossip;
 
-            if (remoteGossip.Equals(Gossip.Empty))
+            if (ReferenceEquals(remoteGossip, Gossip.Empty))
             {
                 _log.Debug("Cluster Node [{0}] - Ignoring received gossip from [{1}] to protect against overload",
                     _cluster.SelfAddress, from);
@@ -1857,14 +1855,14 @@ namespace Akka.Cluster
                     from.Address, envelope.To);
                 return ReceiveGossipType.Ignored;
             }
-            if (!localGossip.Overview.Reachability.IsReachable(SelfUniqueAddress, from))
-            {
-                _cluster.LogInfo("Ignoring received gossip from unreachable [{0}]", from);
-                return ReceiveGossipType.Ignored;
-            }
-            if (localGossip.Members.All(m => !m.UniqueAddress.Equals(from)))
+            if (!localGossip.HasMember(from))
             {
                 _cluster.LogInfo("Cluster Node [{0}] - Ignoring received gossip from unknown [{1}]", _cluster.SelfAddress, from);
+                return ReceiveGossipType.Ignored;
+            }
+            if (!localGossip.IsReachable(SelfUniqueAddress, from))
+            {
+                _cluster.LogInfo("Ignoring received gossip from unreachable [{0}]", from);
                 return ReceiveGossipType.Ignored;
             }
             if (remoteGossip.Members.All(m => !m.UniqueAddress.Equals(SelfUniqueAddress)))
@@ -1910,7 +1908,7 @@ namespace Akka.Cluster
                         if (Gossip.RemoveUnreachableWithMemberStatus.Contains(m.Status) && !remoteGossip.Members.Contains(m))
                         {
                             _log.Debug("Cluster Node [{0}] - Pruned conflicting local gossip: {1}", _cluster.SelfAddress, m);
-                            return g.Prune(VectorClock.Node.Create(VclockName(m.UniqueAddress)));
+                            return g.Prune(VectorClock.Node.Create(Gossip.VclockName(m.UniqueAddress)));
                         }
                         return g;
                     });
@@ -1920,7 +1918,7 @@ namespace Akka.Cluster
                         if (Gossip.RemoveUnreachableWithMemberStatus.Contains(m.Status) && !localGossip.Members.Contains(m))
                         {
                             _log.Debug("Cluster Node [{0}] - Pruned conflicting remote gossip: {1}", _cluster.SelfAddress, m);
-                            return g.Prune(VectorClock.Node.Create(VclockName(m.UniqueAddress)));
+                            return g.Prune(VectorClock.Node.Create(Gossip.VclockName(m.UniqueAddress)));
                         }
                         return g;
                     });
@@ -1949,7 +1947,7 @@ namespace Akka.Cluster
             // for all new joining nodes we remove them from the failure detector
             foreach (var node in _latestGossip.Members)
             {
-                if (node.Status == MemberStatus.Joining && !localGossip.Members.Contains(node))
+                if (!localGossip.Members.Contains(node))
                     _cluster.FailureDetector.Remove(node.Address);
             }
 
@@ -2192,9 +2190,7 @@ namespace Akka.Cluster
 
             if (!changedMembers.IsEmpty)
             {
-                // replace changed members
-                var newMembers = Member.PickNextTransition(localMembers, changedMembers);
-                var newGossip = localGossip.Copy(members: newMembers);
+                var newGossip = localGossip.Update(changedMembers);
                 UpdateLatestGossip(newGossip);
 
                 // log status change
@@ -2204,7 +2200,6 @@ namespace Akka.Cluster
                 }
 
                 Publish(newGossip);
-                if (_cluster.Settings.PublishStatsInterval == TimeSpan.Zero) PublishInternalStats();
             }
         }
 
@@ -2313,34 +2308,18 @@ namespace Akka.Cluster
                 return null;
             }).Where(m => m != null).ToImmutableSortedSet();
 
+            Gossip updatedGossip;
+
             if (!removedUnreachable.IsEmpty || !removedExitingConfirmed.IsEmpty || !changedMembers.IsEmpty)
             {
                 // handle changes
-
-                // replace changed members
-                var newMembers = Member.PickNextTransition(changedMembers, localMembers)
-                    .Except(removedUnreachable)
-                    .Where(x => !removedExitingConfirmed.Contains(x.UniqueAddress))
-                    .ToImmutableSortedSet();
 
                 // removing REMOVED nodes from the `seen` table
                 var removed = removedUnreachable.Select(u => u.UniqueAddress)
                     .ToImmutableHashSet()
                     .Union(removedExitingConfirmed);
-                var newSeen = localSeen.Except(removed);
-                // removing REMOVED nodes from the `reachability` table
-                var newReachability = localOverview.Reachability.Remove(removed);
-                var newOverview = localOverview.Copy(seen: newSeen, reachability: newReachability);
 
-                // Clear the VectorClock when member is removed. The change made by the leader is stamped
-                // and will propagate as is if there are no other changes on other nodes.
-                // If other concurrent changes on other nodes (e.g. join) the pruning is also
-                // taken care of when receiving gossips.
-                var newVersion = removed.Aggregate(localGossip.Version, (v, node) =>
-                {
-                    return v.Prune(VectorClock.Node.Create(VclockName(node)));
-                });
-                var newGossip = localGossip.Copy(members: newMembers, overview: newOverview, version: newVersion);
+                var newGossip = localGossip.Update(changedMembers).RemoveAll(removed, DateTime.UtcNow.Ticks);
 
                 if (!_exitingTasksInProgress && newGossip.GetMember(SelfUniqueAddress).Status == MemberStatus.Exiting)
                 {
@@ -2355,7 +2334,6 @@ namespace Akka.Cluster
                     _coordShutdown.Run(CoordinatedShutdown.ClusterLeavingReason.Instance);
                 }
 
-                UpdateLatestGossip(newGossip);
                 _exitingConfirmed = new HashSet<UniqueAddress>(_exitingConfirmed.Except(removedExitingConfirmed));
 
                 // log status changes
@@ -2373,6 +2351,16 @@ namespace Akka.Cluster
                 {
                     _cluster.LogInfo("Leader is removing confirmed Exiting node [{0}]", m.Address);
                 }
+
+                updatedGossip = newGossip;
+            }
+            else
+                updatedGossip = localGossip;
+
+            var pruned = updatedGossip.PruneTombstones(DateTime.UtcNow.Ticks - _cluster.Settings.PruneGossipTombstonesAfter.Ticks);
+            if (!ReferenceEquals(pruned, localGossip))
+            {
+                UpdateLatestGossip(pruned);
 
                 Publish(_latestGossip);
                 GossipExitingMembersToOldest(changedMembers.Where(i => i.Status == MemberStatus.Exiting));
@@ -2419,7 +2407,7 @@ namespace Akka.Cluster
                         _cluster.FailureDetector.IsAvailable(member.Address))).ToImmutableSortedSet();
 
                 var newlyDetectedReachableMembers = localOverview.Reachability.AllUnreachableFrom(SelfUniqueAddress)
-                        .Where(node => !node.Equals(SelfUniqueAddress) && _cluster.FailureDetector.IsAvailable(node.Address))
+                        .Where(node => !node.Equals(SelfUniqueAddress) && _cluster.FailureDetector.IsAvailable(localGossip.GetMember(node).Address))
                         .Select(localGossip.GetMember).ToImmutableHashSet();
 
                 if (!newlyDetectedUnreachableMembers.IsEmpty || !newlyDetectedReachableMembers.IsEmpty)
@@ -2432,7 +2420,7 @@ namespace Akka.Cluster
                         newReachability1,
                         (reachability, m) => reachability.Reachable(SelfUniqueAddress, m.UniqueAddress));
 
-                    if (!newReachability2.Equals(localOverview.Reachability))
+                    if (!ReferenceEquals(newReachability2, localOverview.Reachability))
                     {
                         var newOverview = localOverview.Copy(reachability: newReachability2);
                         var newGossip = localGossip.Copy(overview: newOverview);

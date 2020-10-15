@@ -9,6 +9,7 @@ using System;
 using System.Collections.Immutable;
 using System.Linq;
 using Akka.Actor;
+using Akka.Event;
 using Akka.Remote;
 
 namespace Akka.Cluster
@@ -17,7 +18,7 @@ namespace Akka.Cluster
     /// Specialization of <see cref="Akka.Remote.RemoteWatcher"/> that keeps
     /// track of cluster member nodes and is responsible for watchees on cluster nodes.
     /// <see cref="Akka.Actor.AddressTerminated"/> is published when a node is removed from cluster
-    /// 
+    ///
     /// `RemoteWatcher` handles non-cluster nodes. `ClusterRemoteWatcher` will take
     /// over responsibility from `RemoteWatcher` if a watch is added before a node is member
     /// of the cluster and then later becomes cluster member.
@@ -39,15 +40,19 @@ namespace Akka.Cluster
         {
             return new Props(typeof(ClusterRemoteWatcher), new object[]
             {
-                failureDetector, 
-                heartbeatInterval, 
-                unreachableReaperInterval, 
+                failureDetector,
+                heartbeatInterval,
+                unreachableReaperInterval,
                 heartbeatExpectedResponseAfter
             }).WithDeploy(Deploy.Local);
         }
 
         private readonly Cluster _cluster;
+        private readonly ILoggingAdapter _log;
+
         private ImmutableHashSet<Address> _clusterNodes = ImmutableHashSet.Create<Address>();
+
+        private ImmutableHashSet<UniqueAddress> memberTombstones = ImmutableHashSet.Create<UniqueAddress>();
 
         /// <summary>
         /// TBD
@@ -60,9 +65,11 @@ namespace Akka.Cluster
             IFailureDetectorRegistry<Address> failureDetector,
             TimeSpan heartbeatInterval,
             TimeSpan unreachableReaperInterval,
-            TimeSpan heartbeatExpectedResponseAfter) :base(failureDetector, heartbeatInterval, unreachableReaperInterval, heartbeatExpectedResponseAfter)
+            TimeSpan heartbeatExpectedResponseAfter) : base(failureDetector, heartbeatInterval, unreachableReaperInterval, heartbeatExpectedResponseAfter)
         {
             _cluster = Cluster.Get(Context.System);
+
+            _log = Logging.GetLogger(Context.System, "ClusterCore");
         }
 
         /// <summary>
@@ -71,7 +78,7 @@ namespace Akka.Cluster
         protected override void PreStart()
         {
             base.PreStart();
-            _cluster.Subscribe(Self, new []{typeof(ClusterEvent.IMemberEvent)});
+            _cluster.Subscribe(Self, new[] { typeof(ClusterEvent.IMemberEvent), typeof(ClusterEvent.MemberTombstonesChanged) });
         }
 
         /// <summary>
@@ -96,6 +103,7 @@ namespace Akka.Cluster
                         state.Members.Select(m => m.Address).Where(a => a != _cluster.SelfAddress).ToImmutableHashSet();
                     foreach (var node in _clusterNodes) TakeOverResponsibility(node);
                     Unreachable.ExceptWith(_clusterNodes);
+                    memberTombstones = state.MemberTombstones;
                     return;
                 case ClusterEvent.MemberUp up:
                     MemberUp(up.Member);
@@ -105,6 +113,9 @@ namespace Akka.Cluster
                     return;
                 case ClusterEvent.MemberRemoved removed:
                     MemberRemoved(removed.Member, removed.PreviousStatus);
+                    return;
+                case ClusterEvent.MemberTombstonesChanged tombstonesChanged:
+                    memberTombstones = tombstonesChanged.Tombstones;
                     return;
                 case ClusterEvent.IMemberEvent _:
                     return; // not interesting
@@ -133,6 +144,21 @@ namespace Akka.Cluster
                     Quarantine(member.Address, member.UniqueAddress.Uid);
                 }
                 PublishAddressTerminated(member.Address);
+            }
+        }
+
+        protected override void AddWatch(IInternalActorRef watchee, IInternalActorRef watcher)
+        {
+            var watcheeNode = watchee.Path.Address;
+            if (!_clusterNodes.Contains(watcheeNode) && memberTombstones.Any(i => i.Address == watcheeNode))
+            {
+                // node is not currently, but was previously part of cluster, trigger death watch notification immediately
+                _log.Debug("Death watch for [{0}] triggered immediately because member was removed from cluster", watchee);
+                watcher.SendSystemMessage(new Dispatch.SysMsg.DeathWatchNotification(watchee, existenceConfirmed: false, addressTerminated: true));
+            }
+            else
+            {
+                base.AddWatch(watchee, watcher);
             }
         }
 

@@ -137,6 +137,22 @@ namespace Akka.Cluster
 
             return (@true.ToImmutableSortedSet(), @false.ToImmutableSortedSet());
         }
+
+        public static bool DictionaryEqual<TKey, TValue>(this IReadOnlyDictionary<TKey, TValue> @this, IReadOnlyDictionary<TKey, TValue> other)
+            where TValue : IEquatable<TValue>
+        {
+            if (@this.Count != other.Count)
+                return false;
+            if (@this.Count > 0)
+            {
+                foreach (var item in @this)
+                {
+                    if (!other.TryGetValue(item.Key, out var val) || !item.Value.Equals(val))
+                        return false;
+                }
+            }
+            return true;
+        }
     }
 }
 

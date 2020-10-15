@@ -19,7 +19,7 @@ namespace Akka.Cluster
     /// from observer nodes. Failure detector for the subject nodes exist on the
     /// observer nodes. Changes (reachable, unreachable, terminated) are only performed
     /// by observer nodes to its own records. Each change bumps the version number of the
-    /// record, and thereby it is always possible to determine which record is newest 
+    /// record, and thereby it is always possible to determine which record is newest
     /// merging two instances.
     ///
     /// Aggregated status of a subject node is defined as (in this order):
@@ -32,7 +32,7 @@ namespace Akka.Cluster
         /// <summary>
         /// TBD
         /// </summary>
-        public static readonly Reachability Empty = 
+        public static readonly Reachability Empty =
             new Reachability(ImmutableList.Create<Record>(), ImmutableDictionary.Create<UniqueAddress, long>());
 
         /// <summary>
@@ -193,11 +193,11 @@ namespace Akka.Cluster
 
                     foreach (var r in records)
                     {
-                        ImmutableDictionary<UniqueAddress, Record> m = mapBuilder.TryGetValue(r.Observer, out m) 
-                            ? m.SetItem(r.Subject, r) 
+                        ImmutableDictionary<UniqueAddress, Record> m = mapBuilder.TryGetValue(r.Observer, out m)
+                            ? m.SetItem(r.Subject, r)
                             //TODO: Other collections take items for Create. Create unnecessary array here
                             : ImmutableDictionary.CreateRange(new[] { new KeyValuePair<UniqueAddress, Record>(r.Subject, r) });
-                        
+
 
                         mapBuilder.AddOrSet(r.Observer, m);
 
@@ -288,7 +288,7 @@ namespace Akka.Cluster
             if (oldRecord.Status == ReachabilityStatus.Terminated || oldRecord.Status == status)
                 return this;
 
-            if(status == ReachabilityStatus.Reachable && 
+            if(status == ReachabilityStatus.Reachable &&
                 oldObserverRows.Values.All(r => r.Status == ReachabilityStatus.Reachable || r.Subject.Equals(subject)))
                 return new Reachability(_records.FindAll(r => !r.Observer.Equals(observer)), newVersions);
 
@@ -435,7 +435,7 @@ namespace Akka.Cluster
         /// </summary>
         public bool IsAllReachable
         {
-            get { return _records.IsEmpty; } 
+            get { return _records.IsEmpty; }
         }
 
         /// <summary>
@@ -521,8 +521,8 @@ namespace Akka.Cluster
         {
             var other = obj as Reachability;
             if (other == null) return false;
-            return _records.Count == other._records.Count && 
-                _versions.Equals(other._versions) && 
+            return _records.Count == other._records.Count &&
+                _versions.Equals(other._versions) &&
                 _cache.Value.ObserverRowMap.Equals(other._cache.Value.ObserverRowMap);
         }
 
